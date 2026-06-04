@@ -323,20 +323,6 @@ npm run build
 - HTTP, GraphQL, and WebSocket E2E refresh flows
 - SQLite persistence integration
 
----
-
-## 🚦 Production Readiness Checklist
-
-While the core logic, client contract, and helpers are production-ready, deploying `sessvm` requires app-specific decisions:
-
-- [ ] **Persistence Layer**: Replace the dev/memory store with a robust, production-grade `Kv` implementation (e.g., Redis, PostgreSQL).
-- [ ] **Key Rotation**: Implement a strategy for rotating the `SESSION_SECRET` without invalidating all active sessions.
-- [ ] **Transport Policy**: Enforce HTTPS, `Secure` cookies, and strict `SameSite` attributes in your deployment environment.
-- [ ] **WebSocket Policy**: Define how your WebSocket server validates the auth material provided by `sessClient.ws()`.
-- [ ] **Monitoring & Auditing**: Hook into the `Ssv` lifecycle events to log suspicious activity (e.g., fingerprint mismatches, replay attempts).
-
----
-
 ## 📄 License
 
 MIT License. See [LICENSE](LICENSE) for details.
