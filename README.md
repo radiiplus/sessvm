@@ -258,6 +258,10 @@ const connectionParams = wsAuth.connectionParams;
 
 `sessvm` does not dictate your database. You implement a simple async `Kv` port, and `sessvm` handles the session logic.
 
+Each item passed to `bind(refs)` includes an explicit `cardinality`. `one` refs (`RTV`, `SID`, `AJT`, and `DEV`) replace the lookup value's current target; `many` refs (`USR` and `FID`) retain distinct targets for listing. `drop(vals)` must remove each exact lookup value supplied by a mutation plan.
+
+Rotated refresh-token `RTV` lookups remain resolvable while their session is active so sessvm can detect replay and revoke the family. Session expiry, logout, family revocation, and replay cleanup remove those lookups. A persistence adapter must keep an equivalent replay tombstone if it compacts rotated `RTV` refs earlier.
+
 ```typescript
 import { pst } from 'sessvm';
 

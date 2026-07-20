@@ -13,9 +13,12 @@ const {
   stp,
   ssv,
   createStore,
+  ajtRef,
+  fidRef,
   rtkKey,
   rtkRef,
   sidRef,
+  usrRef,
   xcg,
   ssnKey,
 } = require("../dist");
@@ -46,6 +49,12 @@ class FakeKv {
   async bind(refs) {
     for (const ref of refs) {
       this.refs.set(ref.val, ref.key);
+
+      if (ref.cardinality === "one") {
+        this.lists.set(ref.val, [ref.key]);
+        continue;
+      }
+
       const items = this.lists.get(ref.val) ?? [];
 
       if (!items.some((item) => `${item.pk}:${item.sk}` === `${ref.key.pk}:${ref.key.sk}`)) {
@@ -241,6 +250,14 @@ test("SessionSvc.rotate rotates refresh tokens and returns a new pair", async ()
   assert.ok(newHit);
   assert.equal(oldHit.rtk.st, "O1");
   assert.equal(newHit.rtk.st, "I1");
+  assert.equal((await svc.store.kv.list(sidRef(started.ssn.id))).length, 1);
+  assert.equal((await svc.store.kv.list(fidRef(oldHit.rtk.fid))).length, 2);
+  assert.equal((await svc.store.kv.list(usrRef(started.ssn.sub))).length, 1);
+  assert.equal(await svc.store.kv.read(ajtRef(started.ssn.ajt)), null);
+  assert.deepEqual(
+    await svc.store.kv.read(ajtRef(rotated.out.ssn.ajt)),
+    ssnKey(started.ssn.id),
+  );
 });
 
 test("SessionSvc.rotate detects replay of a rotated token and revokes the family/session", async () => {
@@ -262,6 +279,14 @@ test("SessionSvc.rotate detects replay of a rotated token and revokes the family
 
   assert.equal(rotated.ok, true);
 
+  const oldHit = await svc.store.getSessionByRefreshToken({ tk: started.rtk });
+  const newHit = await svc.store.getSessionByRefreshToken({
+    tk: rotated.out.rtk,
+  });
+
+  assert.ok(oldHit);
+  assert.ok(newHit);
+
   const replay = await svc.rotate({
     tk: started.rtk,
     did: "device-001",
@@ -279,12 +304,62 @@ test("SessionSvc.rotate detects replay of a rotated token and revokes the family
     tk: rotated.out.rtk,
   });
 
-  assert.ok(replayHit);
-  assert.ok(currentHit);
-  assert.equal(replayHit.rtk.st, REUSE_DETECTED_STATE);
-  assert.equal(currentHit.rtk.st, REVOKED_STATE);
-  assert.equal(replayHit.ssn.st, REVOKED_STATE);
-  assert.equal(currentHit.ssn.st, REVOKED_STATE);
+  assert.equal(replayHit, null);
+  assert.equal(currentHit, null);
+
+  const replayRow = await svc.store.kv.get(rtkKey(oldHit.rtk.id));
+  const currentRow = await svc.store.kv.get(rtkKey(newHit.rtk.id));
+  const sessionRow = await svc.store.kv.get(ssnKey(started.ssn.id));
+
+  assert.equal(replayRow.st, REUSE_DETECTED_STATE);
+  assert.equal(currentRow.st, REVOKED_STATE);
+  assert.equal(sessionRow.st, REVOKED_STATE);
+});
+
+test("SessionStore rejects legacy refs that point at a newer current row", async () => {
+  const svc = createSvc();
+  const started = await svc.start({
+    sub: "user-001",
+    did: "device-001",
+    scp: ["profile:read"],
+    now: 1_717_404_800,
+    bind,
+  });
+  const rotated = await svc.rotate({
+    tk: started.rtk,
+    did: "device-001",
+    now: 1_717_404_900,
+    bind,
+  });
+
+  assert.equal(rotated.ok, true);
+
+  const current = await svc.store.getSessionByRefreshToken({
+    tk: rotated.out.rtk,
+  });
+  assert.ok(current);
+
+  await svc.store.kv.bind([
+    {
+      val: ajtRef(started.ssn.ajt),
+      key: ssnKey(started.ssn.id),
+      cardinality: "one",
+    },
+    {
+      val: rtkRef(started.rtk),
+      key: rtkKey(current.rtk.id),
+      cardinality: "one",
+    },
+  ]);
+
+  assert.equal(
+    await svc.store.getSessionByAccessToken({ jt: started.ssn.ajt }),
+    null,
+  );
+  assert.equal(
+    await svc.store.getSessionByRefreshToken({ tk: started.rtk }),
+    null,
+  );
 });
 
 test("SessionSvc.rotate rejects binding mismatch", async () => {
@@ -387,7 +462,7 @@ test("SessionSvc.rotate rejects revoked-token rotation attempts", async () => {
   });
 
   assert.equal(rotated.ok, false);
-  assert.equal(rotated.rsn, "refresh-not-active");
+  assert.equal(rotated.rsn, "refresh-not-found");
 });
 
 test("SessionSvc can derive binding input from request fingerprints", async () => {
@@ -578,16 +653,13 @@ test("SessionSvc.rotate revokes the full family after replay across multiple rot
   const thirdHit = await svc.store.getSessionByRefreshToken({ tk: third.out.rtk });
   const fourthHit = await svc.store.getSessionByRefreshToken({ tk: fourth.out.rtk });
 
-  assert.ok(firstHit);
-  assert.ok(secondHit);
-  assert.ok(thirdHit);
-  assert.ok(fourthHit);
+  assert.equal(firstHit, null);
+  assert.equal(secondHit, null);
+  assert.equal(thirdHit, null);
+  assert.equal(fourthHit, null);
 
-  assert.equal(secondHit.rtk.st, REUSE_DETECTED_STATE);
-  assert.equal(firstHit.rtk.st, REVOKED_STATE);
-  assert.equal(thirdHit.rtk.st, REVOKED_STATE);
-  assert.equal(fourthHit.rtk.st, REVOKED_STATE);
-  assert.equal(firstHit.ssn.st, REVOKED_STATE);
+  const sessionRow = await svc.store.kv.get(ssnKey(started.ssn.id));
+  assert.equal(sessionRow.st, REVOKED_STATE);
 });
 
 test("SessionSvc.revoke revokes the stored session", async () => {
@@ -611,6 +683,49 @@ test("SessionSvc.revoke revokes the stored session", async () => {
   const session = await svc.store.kv.get(ssnKey(started.ssn.id));
   assert.ok(session);
   assert.equal(session.st, REVOKED_STATE);
+});
+
+test("SessionSvc.revoke removes access and refresh lookups for the whole family", async () => {
+  const svc = createSvc();
+  const started = await svc.start({
+    sub: "user-001",
+    did: "device-001",
+    scp: ["profile:read"],
+    now: 1_717_404_800,
+    bind,
+  });
+  const second = await svc.rotate({
+    tk: started.rtk,
+    did: "device-001",
+    now: 1_717_404_900,
+    bind,
+  });
+
+  assert.equal(second.ok, true);
+
+  const current = await svc.store.getSessionByRefreshToken({
+    tk: second.out.rtk,
+  });
+  assert.ok(current);
+
+  const revoked = await svc.revoke({
+    sid: started.ssn.id,
+    rsn: "manual",
+    now: 1_717_405_000,
+  });
+
+  assert.equal(revoked, true);
+  assert.equal(
+    await svc.store.getSessionByRefreshToken({ tk: started.rtk }),
+    null,
+  );
+  assert.equal(
+    await svc.store.getSessionByRefreshToken({ tk: second.out.rtk }),
+    null,
+  );
+  assert.equal((await svc.store.kv.list(fidRef(current.rtk.fid))).length, 0);
+  assert.equal((await svc.store.kv.list(sidRef(started.ssn.id))).length, 0);
+  assert.equal((await svc.store.kv.list(usrRef(started.ssn.sub))).length, 1);
 });
 
 test("SessionStore lists active sessions as device-scoped views", async () => {
@@ -864,5 +979,34 @@ test("RefreshExchange rejects revoked sessions", async () => {
 
   assert.equal(out.ok, false);
   assert.equal(out.refreshed, false);
-  assert.equal(out.rsn, "session-not-active");
+  assert.equal(out.rsn, "session-not-found");
+});
+
+test("SessionSvc.rotate rejects and unlinks expired refresh state", async () => {
+  const svc = createSvc();
+  const started = await svc.start({
+    sub: "user-001",
+    did: "device-001",
+    scp: ["profile:read"],
+    now: 1_717_404_800,
+    bind,
+  });
+
+  const rotated = await svc.rotate({
+    tk: started.rtk,
+    did: "device-001",
+    now: started.ssn.exp,
+    bind,
+  });
+
+  assert.equal(rotated.ok, false);
+  assert.equal(rotated.rsn, "refresh-not-active");
+  assert.equal(
+    await svc.store.getSessionByRefreshToken({ tk: started.rtk }),
+    null,
+  );
+  assert.equal(
+    await svc.store.getSessionByAccessToken({ jt: started.ssn.ajt }),
+    null,
+  );
 });

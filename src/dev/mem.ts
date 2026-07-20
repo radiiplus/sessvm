@@ -167,6 +167,12 @@ class MemKv implements Kv {
   async bind(refs: readonly Ref[]): Promise<void> {
     for (const ref of refs) {
       this.refs.set(ref.val, copyKey(ref.key));
+
+      if (ref.cardinality === "one") {
+        this.lists.set(ref.val, [copyKey(ref.key)]);
+        continue;
+      }
+
       const items = this.lists.get(ref.val) ?? [];
 
       if (!items.some((item) => keyId(item) === keyId(ref.key))) {

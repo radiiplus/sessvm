@@ -311,6 +311,19 @@ export class Ssv {
       };
     }
 
+    if (isExpired(hit.rtk.exp, input.now) || isExpired(hit.ssn.exp, input.now)) {
+      await this.store.revokeSession({
+        sid: hit.ssn.id,
+        rsn: "refresh-token-expired",
+        at: input.now,
+      });
+      return {
+        ok: false,
+        rsn: "refresh-not-active",
+        sid: hit.ssn.id,
+      };
+    }
+
     if (hit.rtk.st === ROTATED_STATE) {
       await this.store.revokeRefreshFamily({
         sid: hit.ssn.id,

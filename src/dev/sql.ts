@@ -93,12 +93,17 @@ export class SqlKv implements Kv {
   }
 
   async bind(refs: readonly Ref[]): Promise<void> {
+    const drop = this.db.prepare("DELETE FROM refs WHERE val = ?");
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO refs (val, key_id)
       VALUES (?, ?)
     `);
 
     for (const ref of refs) {
+      if (ref.cardinality === "one") {
+        drop.run(ref.val);
+      }
+
       stmt.run(ref.val, keyId(ref.key));
     }
   }

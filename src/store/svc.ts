@@ -1,9 +1,8 @@
+import { ACTIVE_STATE } from "../tokens";
 import {
   ajtRef,
   createAccessExchangePlan,
-  createRef,
   createFamilyRevokePlan,
-  createSessionRef,
   createReusePlan,
   createRevokePlan,
   createRotatePlan,
@@ -34,6 +33,15 @@ import {
   type Store,
 } from "../store";
 
+function includeToken<T extends { readonly id: string }>(
+  family: readonly T[],
+  token: T,
+): readonly T[] {
+  return family.some((item) => item.id === token.id)
+    ? family
+    : [...family, token];
+}
+
 export function createStore(kv: Kv): Store {
   return {
     kv,
@@ -54,13 +62,21 @@ export function createStore(kv: Kv): Store {
 
       const tokenRow = await kv.get(tokenKey);
 
-      if (tokenRow === null || !isRtk(tokenRow)) {
+      if (
+        tokenRow === null ||
+        !isRtk(tokenRow) ||
+        tokenRow.tk !== input.tk
+      ) {
         return null;
       }
 
       const sessionRow = await kv.get(ssnKey(tokenRow.sid));
 
-      if (sessionRow === null || !isSsn(sessionRow)) {
+      if (
+        sessionRow === null ||
+        !isSsn(sessionRow) ||
+        sessionRow.st !== ACTIVE_STATE
+      ) {
         return null;
       }
 
@@ -79,7 +95,12 @@ export function createStore(kv: Kv): Store {
 
       const sessionRow = await kv.get(sessionKey);
 
-      if (sessionRow === null || !isSsn(sessionRow)) {
+      if (
+        sessionRow === null ||
+        !isSsn(sessionRow) ||
+        sessionRow.st !== ACTIVE_STATE ||
+        sessionRow.ajt !== input.jt
+      ) {
         return null;
       }
 
@@ -97,7 +118,13 @@ export function createStore(kv: Kv): Store {
 
       const sessionRow = await kv.get(sessionKey);
 
-      if (sessionRow === null || !isSsn(sessionRow)) {
+      if (
+        sessionRow === null ||
+        !isSsn(sessionRow) ||
+        sessionRow.st !== ACTIVE_STATE ||
+        sessionRow.sub !== input.sub ||
+        sessionRow.did !== input.did
+      ) {
         return null;
       }
 
@@ -134,9 +161,21 @@ export function createStore(kv: Kv): Store {
         return null;
       }
 
-      const plan = createRevokePlan(sessionRow, tokenRow, input.at, input.rsn);
+      const familyKeys = await kv.list(fidRef(tokenRow.fid));
+      const familyRows = await Promise.all(
+        familyKeys.map(async (key) => kv.get(key)),
+      );
+      const family = familyRows.filter((row) => row !== null && isRtk(row));
+      const completeFamily = includeToken(family, tokenRow);
+      const plan = createRevokePlan(
+        sessionRow,
+        tokenRow,
+        input.at,
+        input.rsn,
+        completeFamily,
+      );
       await kv.put(plan.set);
-      await kv.bind([...createRef(plan.rtk), ...createSessionRef(plan.ssn)]);
+      await kv.drop(plan.drop);
       return plan;
     },
 
@@ -164,9 +203,15 @@ export function createStore(kv: Kv): Store {
         familyKeys.map(async (key) => kv.get(key)),
       );
       const family = familyRows.filter((row) => row !== null && isRtk(row));
-      const plan = createFamilyRevokePlan(sessionRow, family, input.at, input.rsn);
+      const completeFamily = includeToken(family, tokenRow);
+      const plan = createFamilyRevokePlan(
+        sessionRow,
+        completeFamily,
+        input.at,
+        input.rsn,
+      );
       await kv.put(plan.set);
-      await kv.bind(createSessionRef(plan.ssn));
+      await kv.drop(plan.drop);
       return plan;
     },
 
@@ -185,7 +230,11 @@ export function createStore(kv: Kv): Store {
 
       const tokenRow = await kv.get(tokenKey);
 
-      if (tokenRow === null || !isRtk(tokenRow)) {
+      if (
+        tokenRow === null ||
+        !isRtk(tokenRow) ||
+        tokenRow.tk !== input.tk
+      ) {
         return null;
       }
 
@@ -194,9 +243,15 @@ export function createStore(kv: Kv): Store {
         familyKeys.map(async (key) => kv.get(key)),
       );
       const family = familyRows.filter((row) => row !== null && isRtk(row));
-      const plan = createReusePlan(sessionRow, tokenRow, input.at, family);
+      const completeFamily = includeToken(family, tokenRow);
+      const plan = createReusePlan(
+        sessionRow,
+        tokenRow,
+        input.at,
+        completeFamily,
+      );
       await kv.put(plan.set);
-      await kv.bind([...createRef(plan.rtk), ...createSessionRef(plan.ssn)]);
+      await kv.drop(plan.drop);
       return plan;
     },
 
@@ -209,6 +264,7 @@ export function createStore(kv: Kv): Store {
 
       const plan = createAccessExchangePlan(sessionRow, input);
       await kv.put(plan.set);
+      await kv.drop(plan.drop);
       await kv.bind(plan.ref);
       return plan;
     },
@@ -222,6 +278,7 @@ export function createStore(kv: Kv): Store {
 
       const plan = createRotatePlan(input, sessionRow);
       await kv.put(plan.set);
+      await kv.drop(plan.drop);
       await kv.bind(plan.ref);
 
       if (plan.del.length > 0) {

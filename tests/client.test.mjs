@@ -277,6 +277,12 @@ class E2eKv {
   async bind(refs) {
     for (const ref of refs) {
       this.refs.set(ref.val, ref.key);
+
+      if (ref.cardinality === "one") {
+        this.lists.set(ref.val, [ref.key]);
+        continue;
+      }
+
       const items = this.lists.get(ref.val) ?? [];
 
       if (!items.some((item) => `${item.pk}:${item.sk}` === `${ref.key.pk}:${ref.key.sk}`)) {

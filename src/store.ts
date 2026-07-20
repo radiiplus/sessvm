@@ -59,9 +59,12 @@ export interface Key {
   readonly sk: string;
 }
 
+export type RefCardinality = "one" | "many";
+
 export interface Ref {
   readonly key: Key;
   readonly val: string;
+  readonly cardinality: RefCardinality;
 }
 
 export interface ListRef {
@@ -95,12 +98,14 @@ export interface Rev {
   readonly ssn: Ssn;
   readonly rtk: Rtk<RevokedState>;
   readonly set: readonly SetRec[];
+  readonly drop: readonly string[];
 }
 
 export interface Fam {
   readonly ssn: Ssn;
   readonly fam: readonly Rtk[];
   readonly set: readonly SetRec[];
+  readonly drop: readonly string[];
 }
 
 export interface Reu {
@@ -108,11 +113,13 @@ export interface Reu {
   readonly rtk: Rtk;
   readonly fam: readonly Rtk[];
   readonly set: readonly SetRec[];
+  readonly drop: readonly string[];
 }
 
 export interface Acc {
   readonly ssn: Ssn;
   readonly set: readonly SetRec[];
+  readonly drop: readonly string[];
   readonly ref: readonly Ref[];
 }
 
@@ -122,6 +129,7 @@ export interface Rot {
   readonly nxt: Rtk<IssuedState>;
   readonly set: readonly SetRec[];
   readonly del: readonly DelRec[];
+  readonly drop: readonly string[];
   readonly ref: readonly Ref[];
 }
 
@@ -317,14 +325,17 @@ export function createRef(rtk: Rtk): readonly Ref[] {
     {
       key: rtkKey(rtk.id),
       val: rtkRef(rtk.tk),
+      cardinality: "one",
     },
     {
       key: rtkKey(rtk.id),
       val: sidRef(rtk.sid),
+      cardinality: "one",
     },
     {
       key: rtkKey(rtk.id),
       val: fidRef(rtk.fid),
+      cardinality: "many",
     },
   ];
 }
@@ -334,10 +345,12 @@ export function createSessionRef(ssn: Ssn): readonly Ref[] {
     {
       key: ssnKey(ssn.id),
       val: usrRef(ssn.sub),
+      cardinality: "many",
     },
     {
       key: ssnKey(ssn.id),
       val: devRef(ssn.sub, ssn.did),
+      cardinality: "one",
     },
   ];
 
@@ -350,7 +363,29 @@ export function createSessionRef(ssn: Ssn): readonly Ref[] {
     {
       key: ssnKey(ssn.id),
       val: ajtRef(ssn.ajt),
+      cardinality: "one",
     },
+  ];
+}
+
+function sessionLookupRefs(ssn: Ssn): readonly string[] {
+  return [
+    sidRef(ssn.id),
+    devRef(ssn.sub, ssn.did),
+    ...(ssn.ajt === undefined ? [] : [ajtRef(ssn.ajt)]),
+  ];
+}
+
+function familyLookupRefs(fam: readonly Rtk[]): readonly string[] {
+  const first = fam[0];
+
+  if (first === undefined) {
+    return [];
+  }
+
+  return [
+    fidRef(first.fid),
+    ...fam.map((item) => rtkRef(item.tk)),
   ];
 }
 
@@ -413,6 +448,7 @@ export function createRevokePlan(
   rtk: Rtk,
   at: number,
   rsn: string,
+  fam: readonly Rtk[] = [rtk],
 ): Rev {
   const nextSsn: Ssn = {
     ...ssn,
@@ -430,6 +466,7 @@ export function createRevokePlan(
     ssn: nextSsn,
     rtk: nextRtk,
     set: createSetRec(nextSsn, nextRtk),
+    drop: [...sessionLookupRefs(nextSsn), ...familyLookupRefs(fam)],
   };
 }
 
@@ -464,6 +501,7 @@ export function createFamilyRevokePlan(
         exp: item.exp,
       })),
     ],
+    drop: [...sessionLookupRefs(nextSsn), ...familyLookupRefs(fam)],
   };
 }
 
@@ -508,6 +546,7 @@ export function createReusePlan(
         exp: item.exp,
       })),
     ],
+    drop: [...sessionLookupRefs(nextSsn), ...familyLookupRefs(fam)],
   };
 }
 
@@ -536,6 +575,10 @@ export function createAccessExchangePlan(
         exp: nextSsn.exp,
       },
     ],
+    drop:
+      ssn.ajt === undefined || ssn.ajt === input.ajt
+        ? []
+        : [ajtRef(ssn.ajt)],
     ref: createSessionRef(nextSsn),
   };
 }
@@ -576,6 +619,10 @@ export function createRotatePlan(input: RotIn, ssn: Ssn): Rot {
       },
     ],
     del: [],
+    drop:
+      ssn.ajt === undefined || ssn.ajt === nextSsn.ajt
+        ? []
+        : [ajtRef(ssn.ajt)],
     ref: [...createRef(input.nxt), ...createSessionRef(nextSsn)],
   };
 }
