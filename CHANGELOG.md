@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Relicensed the project from MIT to a choice of LGPL-3.0-only or GPL-3.0-only.
 - Persistence adapters must replace the current target for `one` refs and retain
   distinct targets for `many` refs.
 - The bundled memory and SQLite adapters now honor ref cardinality.

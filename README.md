@@ -329,4 +329,5 @@ npm run build
 
 ## 📄 License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Dual-licensed under your choice of LGPL-3.0-only or GPL-3.0-only. See
+[LICENSE](LICENSE) for details.
